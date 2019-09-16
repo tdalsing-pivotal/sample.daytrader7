@@ -15,38 +15,32 @@
  */
 package com.ibm.websphere.samples.daytrader.ejb3;
 
-import javax.annotation.Resource;
-import javax.ejb.ActivationConfigProperty;
-import javax.ejb.EJB;
-import javax.ejb.MessageDriven;
-import javax.ejb.MessageDrivenContext;
-import javax.ejb.TransactionAttribute;
-import javax.ejb.TransactionAttributeType;
-import javax.ejb.TransactionManagement;
-import javax.ejb.TransactionManagementType;
-import javax.jms.Message;
-import javax.jms.MessageListener;
-import javax.jms.TextMessage;
-
 import com.ibm.websphere.samples.daytrader.TradeServices;
 import com.ibm.websphere.samples.daytrader.direct.TradeDirect;
 import com.ibm.websphere.samples.daytrader.util.Log;
 import com.ibm.websphere.samples.daytrader.util.MDBStats;
 import com.ibm.websphere.samples.daytrader.util.TimerStat;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
-@TransactionAttribute(TransactionAttributeType.REQUIRED)
-@TransactionManagement(TransactionManagementType.CONTAINER)
-@MessageDriven(activationConfig = { @ActivationConfigProperty(propertyName = "acknowledgeMode", propertyValue = "Auto-acknowledge"),
-        @ActivationConfigProperty(propertyName = "destinationType", propertyValue = "javax.jms.Queue"),
-        @ActivationConfigProperty(propertyName = "destination", propertyValue = "TradeBrokerQueue"),
-        @ActivationConfigProperty(propertyName = "subscriptionDurability", propertyValue = "NonDurable") })
-public class DTBroker3MDB implements MessageListener {
+import javax.annotation.Resource;
+import javax.ejb.MessageDrivenContext;
+import javax.jms.Message;
+import javax.jms.TextMessage;
+
+@Service
+@Transactional(propagation = Propagation.REQUIRED)
+public class DTBroker3MDB {
+
     private final MDBStats mdbStats;
+
     private int statInterval = 10000;
 
-    
     // TODO: Using local interface, make it configurable to use remote?
-    @EJB
+    @Autowired
     private TradeSLSBLocal tradeSLSB;
 
     @Resource
@@ -62,14 +56,12 @@ public class DTBroker3MDB implements MessageListener {
         mdbStats = MDBStats.getInstance();
     }
 
-    @Override
+    @JmsListener(destination = "TradeBrokerQueue")
     public void onMessage(Message message) {
         try {
             if (Log.doTrace()) {
-                Log.trace("TradeBroker:onMessage -- received message -->" + ((TextMessage) message).getText() + "command-->"
-                        + message.getStringProperty("command") + "<--");
+                Log.trace("TradeBroker:onMessage -- received message -->" + ((TextMessage) message).getText() + "command-->" + message.getStringProperty("command") + "<--");
             }
-
             if (message.getJMSRedelivered()) {
                 Log.log("DTBroker3MDB: The following JMS message was redelivered due to a rollback:\n" + ((TextMessage) message).getText());
                 // Order has been cancelled -- ignore returned messages
@@ -87,32 +79,21 @@ public class DTBroker3MDB implements MessageListener {
                 boolean direct = message.getBooleanProperty("direct");
                 long publishTime = message.getLongProperty("publishTime");
                 long receiveTime = System.currentTimeMillis();
-
                 TradeServices trade = null;
-
                 try {
                     trade = getTrade(direct);
-
                     if (Log.doTrace()) {
                         Log.trace("DTBroker3MDB:onMessage - completing order " + orderID + " twoPhase=" + twoPhase + " direct=" + direct);
                     }
-
                     trade.completeOrder(orderID, twoPhase);
-
                     TimerStat currentStats = mdbStats.addTiming("DTBroker3MDB:neworder", publishTime, receiveTime);
-
                     if ((currentStats.getCount() % statInterval) == 0) {
-                        Log.log(" DTBroker3MDB: processed " + statInterval + " stock trading orders." +
-                                " Total NewOrders process = " + currentStats.getCount() +
-                                "Time (in seconds):" +
-                                " min: " +currentStats.getMinSecs()+
-                                " max: " +currentStats.getMaxSecs()+
-                                " avg: " +currentStats.getAvgSecs());
+                        Log.log(" DTBroker3MDB: processed " + statInterval + " stock trading orders." + " Total NewOrders process = " + currentStats.getCount() + "Time (in seconds):" + " min: " + currentStats.getMinSecs() + " max: " + currentStats.getMaxSecs() + " avg: " + currentStats.getAvgSecs());
                     }
                 } catch (Exception e) {
                     Log.error("DTBroker3MDB:onMessage Exception completing order: " + orderID + "\n", e);
                     mdc.setRollbackOnly();
-                    /*
+                /*
                      * UPDATE - order is cancelled in trade if an error is
                      * caught try { trade.cancelOrder(orderID, twoPhase); }
                      * catch (Exception e2) { Log.error("order cancel failed",
@@ -123,19 +104,11 @@ public class DTBroker3MDB implements MessageListener {
                 if (Log.doTrace()) {
                     Log.trace("DTBroker3MDB:onMessage  received test command -- message: " + ((TextMessage) message).getText());
                 }
-
                 long publishTime = message.getLongProperty("publishTime");
                 long receiveTime = System.currentTimeMillis();
-
                 TimerStat currentStats = mdbStats.addTiming("DTBroker3MDB:ping", publishTime, receiveTime);
-
                 if ((currentStats.getCount() % statInterval) == 0) {
-                    Log.log(" DTBroker3MDB: received " + statInterval + " ping messages." +
-                            " Total ping message count = " + currentStats.getCount() +
-                            " Time (in seconds):" +
-                            " min: " +currentStats.getMinSecs()+
-                            " max: " +currentStats.getMaxSecs()+
-                            " avg: " +currentStats.getAvgSecs());
+                    Log.log(" DTBroker3MDB: received " + statInterval + " ping messages." + " Total ping message count = " + currentStats.getCount() + " Time (in seconds):" + " min: " + currentStats.getMinSecs() + " max: " + currentStats.getMaxSecs() + " avg: " + currentStats.getAvgSecs());
                 }
             } else {
                 Log.error("DTBroker3MDB:onMessage - unknown message request command-->" + command + "<-- message=" + ((TextMessage) message).getText());
@@ -154,8 +127,6 @@ public class DTBroker3MDB implements MessageListener {
         } else {
             trade = tradeSLSB;
         }
-
         return trade;
     }
-
 }

@@ -15,41 +15,33 @@
  */
 package com.ibm.websphere.samples.daytrader.ejb3;
 
+import com.ibm.websphere.samples.daytrader.util.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jms.annotation.JmsListener;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
 import javax.annotation.Resource;
-import javax.ejb.ActivationConfigProperty;
-import javax.ejb.MessageDriven;
 import javax.ejb.MessageDrivenContext;
-import javax.ejb.TransactionAttribute;
-import javax.ejb.TransactionAttributeType;
-import javax.ejb.TransactionManagement;
-import javax.ejb.TransactionManagementType;
 import javax.enterprise.event.Event;
-import javax.inject.Inject;
 import javax.jms.Message;
-import javax.jms.MessageListener;
 import javax.jms.TextMessage;
 
-import com.ibm.websphere.samples.daytrader.util.Log;
-import com.ibm.websphere.samples.daytrader.util.MDBStats;
-import com.ibm.websphere.samples.daytrader.util.TimerStat;
-import com.ibm.websphere.samples.daytrader.util.TradeConfig;
-import com.ibm.websphere.samples.daytrader.util.WebSocketJMSMessage;
-
-@TransactionAttribute(TransactionAttributeType.REQUIRED)
-@TransactionManagement(TransactionManagementType.CONTAINER)
-@MessageDriven(activationConfig = { @ActivationConfigProperty(propertyName = "acknowledgeMode", propertyValue = "Auto-acknowledge"),
-        @ActivationConfigProperty(propertyName = "destinationType", propertyValue = "javax.jms.Topic"),
-        @ActivationConfigProperty(propertyName = "destination", propertyValue = "TradeStreamerTopic"),
-        @ActivationConfigProperty(propertyName = "subscriptionDurability", propertyValue = "NonDurable") })
-public class DTStreamer3MDB implements MessageListener {
+@Service
+@Transactional(propagation = Propagation.REQUIRED)
+public class DTStreamer3MDB {
 
     private final MDBStats mdbStats;
+
     private int statInterval = 10000;
 
     @Resource
     public MessageDrivenContext mdc;
 
-    /** Creates a new instance of TradeSteamerMDB */
+    /**
+     * Creates a new instance of TradeSteamerMDB
+     */
     public DTStreamer3MDB() {
         if (Log.doTrace()) {
             Log.trace("DTStreamer3MDB:DTStreamer3MDB()");
@@ -60,17 +52,15 @@ public class DTStreamer3MDB implements MessageListener {
         mdbStats = MDBStats.getInstance();
     }
 
-    @Inject
     @WebSocketJMSMessage
+    @Autowired
     Event<Message> jmsEvent;
 
-    @Override
+    @JmsListener(destination = "TradeStreamerTopic")
     public void onMessage(Message message) {
-
         try {
             if (Log.doTrace()) {
-                Log.trace("DTStreamer3MDB:onMessage -- received message -->" + ((TextMessage) message).getText() + "command-->"
-                        + message.getStringProperty("command") + "<--");
+                Log.trace("DTStreamer3MDB:onMessage -- received message -->" + ((TextMessage) message).getText() + "command-->" + message.getStringProperty("command") + "<--");
             }
             String command = message.getStringProperty("command");
             if (command == null) {
@@ -79,49 +69,29 @@ public class DTStreamer3MDB implements MessageListener {
             }
             if (command.equalsIgnoreCase("updateQuote")) {
                 if (Log.doTrace()) {
-                    Log.trace("DTStreamer3MDB:onMessage -- received message -->" + ((TextMessage) message).getText() + "\n\t symbol = "
-                            + message.getStringProperty("symbol") + "\n\t current price =" + message.getStringProperty("price") + "\n\t old price ="
-                            + message.getStringProperty("oldPrice"));
+                    Log.trace("DTStreamer3MDB:onMessage -- received message -->" + ((TextMessage) message).getText() + "\n\t symbol = " + message.getStringProperty("symbol") + "\n\t current price =" + message.getStringProperty("price") + "\n\t old price =" + message.getStringProperty("oldPrice"));
                 }
                 long publishTime = message.getLongProperty("publishTime");
                 long receiveTime = System.currentTimeMillis();
-
                 TimerStat currentStats = mdbStats.addTiming("DTStreamer3MDB:udpateQuote", publishTime, receiveTime);
-
                 if ((currentStats.getCount() % statInterval) == 0) {
-                    Log.log(" DTStreamer3MDB: " + statInterval + " prices updated:" +
-                            " Total message count = " + currentStats.getCount() +
-                            " Time (in seconds):" +
-                            " min: " +currentStats.getMinSecs()+
-                            " max: " +currentStats.getMaxSecs()+
-                            " avg: " +currentStats.getAvgSecs() );
+                    Log.log(" DTStreamer3MDB: " + statInterval + " prices updated:" + " Total message count = " + currentStats.getCount() + " Time (in seconds):" + " min: " + currentStats.getMinSecs() + " max: " + currentStats.getMaxSecs() + " avg: " + currentStats.getAvgSecs());
                 }
-                
                 // Fire message to Websocket Endpoint
                 // Limit Symbols that get sent with percentageToWebSocket (default 5%).
                 int symbolNumber = new Integer(message.getStringProperty("symbol").substring(2));
-                
-                if ( symbolNumber < TradeConfig.getMAX_QUOTES() * TradeConfig.getPercentSentToWebsocket() * 0.01) {
-                	jmsEvent.fire(message);
+                if (symbolNumber < TradeConfig.getMAX_QUOTES() * TradeConfig.getPercentSentToWebsocket() * 0.01) {
+                    jmsEvent.fire(message);
                 }
-                
             } else if (command.equalsIgnoreCase("ping")) {
                 if (Log.doTrace()) {
                     Log.trace("DTStreamer3MDB:onMessage  received ping command -- message: " + ((TextMessage) message).getText());
                 }
-
                 long publishTime = message.getLongProperty("publishTime");
                 long receiveTime = System.currentTimeMillis();
-
                 TimerStat currentStats = mdbStats.addTiming("DTStreamer3MDB:ping", publishTime, receiveTime);
-
                 if ((currentStats.getCount() % statInterval) == 0) {
-                    Log.log(" DTStreamer3MDB: received " + statInterval + " ping messages." +
-                            " Total message count = " + currentStats.getCount() +
-                            " Time (in seconds):" +
-                            " min: " +currentStats.getMinSecs()+
-                            " max: " +currentStats.getMaxSecs()+
-                            " avg: " +currentStats.getAvgSecs());
+                    Log.log(" DTStreamer3MDB: received " + statInterval + " ping messages." + " Total message count = " + currentStats.getCount() + " Time (in seconds):" + " min: " + currentStats.getMinSecs() + " max: " + currentStats.getMaxSecs() + " avg: " + currentStats.getAvgSecs());
                 }
             } else {
                 Log.error("DTStreamer3MDB:onMessage - unknown message request command-->" + command + "<-- message=" + ((TextMessage) message).getText());
@@ -129,9 +99,8 @@ public class DTStreamer3MDB implements MessageListener {
         } catch (Throwable t) {
             // JMS onMessage should handle all exceptions
             Log.error("DTStreamer3MDB: Exception", t);
-             //UPDATE - Not rolling back for now -- so error messages are not redelivered
-             mdc.setRollbackOnly();
+            // UPDATE - Not rolling back for now -- so error messages are not redelivered
+            mdc.setRollbackOnly();
         }
     }
-
 }
